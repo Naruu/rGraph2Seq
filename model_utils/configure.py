@@ -8,6 +8,9 @@ hop_size = 4
 model_path = "model_result/model.pth"
 # word_embedding_dim = 16
 
+degree_max_size = 5
+graph_size = 7
+
 ## Graph2Seq
 #########
 train_data_path = "../data/no_cycle/train.data"

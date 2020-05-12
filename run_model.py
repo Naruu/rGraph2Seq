@@ -39,9 +39,9 @@ def main(mode):
     queue = torch.utils.data.DataLoader(dataset, batch_size=conf.batch_size, shuffle=True, pin_memory=True)
 
     ## model에 input과 target을 batch 만큼 전달
-    ## 그러면 그때마다 decoder output과 target 사이의 차이가 나오겠지
+    ## 그러면 그때마다 decoder output과 target 사이의 차이가 나옴
     ## train이면 optimize 시키고
-    ## test이면 통계를 내야겠지.
+    ## test이면 통계
 
 
     if mode == "train":
@@ -93,7 +93,7 @@ def main(mode):
                 decoder_target = sample['decoder_target']
                 log_prob, predicted_value = model(encoder_input, targets=decoder_target)
                 
-                match = torch.all(torch.eq(predicted_value, decoder_target), dim=1)
+                match = torch.all(torch.equal(predicted_value, decoder_target), dim=1)
                 accuracy = match / encoder_input.size(1)
                 """
                 ## TODO calculate accuracy

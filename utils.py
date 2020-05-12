@@ -6,6 +6,7 @@ import numpy as np
 import torch
 import torch.utils.data
 import torch.nn.functional as F
+import model_utils.configure as conf
 ## from nasbench import api
 
 INPUT = 'input'
@@ -40,11 +41,11 @@ class AvgrageMeter(object):
         self.cnt += n
         self.avg = self.sum / self.cnt
 
-class ControllerDataset(torch.utils.data.Dataset):
-    def __init__(self, file_path, graph_size):
-        super(ControllerDataset, self).__init__()
         
-        self.graph_size = graph_size
+class ControllerDataset(torch.utils.data.Dataset):
+    def __init__(self, file_path):
+        super(ControllerDataset, self).__init__()
+
         self.adjacency_matrices = []
         self.operations = []
         self.sequences = []
@@ -52,28 +53,19 @@ class ControllerDataset(torch.utils.data.Dataset):
         with open(file_path, "r") as f:
             for line in f.readlines():
                 line = line.strip()
-            
+
                 jo = json.loads(line, object_pairs_hook=OrderedDict)
 
                 self.adjacency_matrices.append(jo['module_adjacency'])
                 self.operations.append(jo['module_operations'])
                 self.sequences.append(jo['sequence'])
-    
-    def __getitem__(self, index):
-        matrix = self.adjacency_matrices[index]
-        n = len(matrix)
 
-        g_fw_adjs = [list() for _ in range(n)]
-        g_bw_adjs = [list() for _ in range(n)]
-        for row in range(n):
-            for col in range(row + 1, n):
-                if matrix[row][col] :
-                    print(row, col, matrix[row][col])
-                    g_fw_adjs[row].append(col)
-                    g_bw_adjs[col].append(row)
+    def __getitem__(self, index):
+        operations = self.operations[index]
+        num_nodes = len(operations)
 
         ops = []
-        for op in self.operations[index]:
+        for op in operations:
             if op == CONV1X1:
                 ops.append(3)
             elif op == CONV3X3:
@@ -85,16 +77,8 @@ class ControllerDataset(torch.utils.data.Dataset):
             if op == INPUT:
                 ops.append(7)
 
-        print(matrix)
-        print(ops)
-        print(g_fw_adjs)
-        print(g_bw_adjs)
-        print(ops)
-        print(self.sequences[index])
-
         sample = {
-            'fw_adjs': np.array(g_fw_adjs),
-            'bw_adjs': np.array(g_bw_adjs),
+            'matrix' : torch.IntTensor(self.adjacency_matrices[index]),
             'operations': torch.IntTensor(ops),
             'sequence': torch.IntTensor(self.sequences[index])
         }
@@ -103,6 +87,73 @@ class ControllerDataset(torch.utils.data.Dataset):
     def __len__(self):
         return len(self.sequences)
 
+def collate_fn(samples):
+    ## transform into batch samples
+
+    ## create node -> global idnex
+    ## global index -> neighbor's global index
+    ## padding -> consistent batch dimension ? vector length
+
+    degree_max_size = conf.degree_max_size
+    graph_size = conf.graph_size
+    # degree_max_size = 5
+    # graph_size = 7
+    seq_max_length = int((graph_size+2)*(graph_size-1)/2)
+    print(seq_max_length)
+
+    g_idxs = []
+    g_fw_adjs = []
+    g_bw_adjs = []
+    g_operations = []
+    g_sequence = []
+
+    ## padding is at index 0
+    g_fw_adjs.append(list())
+    g_bw_adjs.append(list())
+    g_operations.append(0)
+
+    g_idx_base = 1
+    for g_idx, sample in enumerate(samples):
+        matrix = sample['matrix']
+        num_nodes = matrix.shape[0]
+
+        for row in range(num_nodes):
+            g_fw_adjs.append(list())
+            g_bw_adjs.append(list())
+
+        for row in range(num_nodes):
+           for col in range(row+1, num_nodes):
+            if matrix[row][col] :
+                g_fw_adjs[g_idx_base + row].append(g_idx_base + col)
+                g_bw_adjs[g_idx_base + col].append(g_idx_base + row)
+
+
+        for op in sample['operations']:
+            g_operations.append(op)
+
+        sequence = sample['sequence']
+
+        sequence = torch.cat([sequence, torch.IntTensor([0] * (seq_max_length - len(sequence)))])
+        g_sequence.append(sequence)
+
+        g_idx_base += num_nodes
+
+    for idx in range(len(g_fw_adjs)):
+        g_fw_adjs[idx].extend([0] * (degree_max_size - len(g_fw_adjs[idx])))
+        g_bw_adjs[idx].extend([0] * (degree_max_size - len(g_bw_adjs[idx])))
+        
+
+    g_fw_adjs = torch.IntTensor(g_fw_adjs)
+    g_bw_adjs = torch.IntTensor(g_bw_adjs)
+    g_operations = torch.IntTensor(g_operations)
+    g_sequence = torch.stack(g_sequence)
+
+    return {
+            'fw_adjs': g_fw_adjs,
+            'bw_adjs': g_bw_adjs,
+            'operations': g_operations,
+            'sequence': g_sequence
+            }
 
 def convert_arch_to_seq(matrix, ops):
     seq = []
@@ -119,9 +170,9 @@ def convert_arch_to_seq(matrix, ops):
             seq.append(5)
         if ops[col] == OUTPUT:
             seq.append(6)
-    assert len(seq) == (n+2)*(n-1)/2
     return seq
 
+    assert len(seq) == (n+2)*(n-1)/2
 
 def convert_seq_to_arch(seq):
     n = int(math.floor(math.sqrt((len(seq) + 1) * 2)))

@@ -55,7 +55,7 @@ class MeanAggregator(nn.Module):
         if not self.concat:
             output = torch.add(from_self, from_neighs)
         else:
-            output = torch.cat([from_self, from_neighs], axis=1)
+            output = torch.cat([from_self, from_neighs], dim=1)
 
         # bias
         if self.bias:

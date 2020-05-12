@@ -44,16 +44,20 @@ class Encoder(nn.Module):
         """
         self.dropout = dropout
         self.learning_rate = learning_rate
-
-        self.fw_aggregators = []
-        self.bw_aggregators = []
     
     def forward(self, fw_adjs, bw_adjs, features):
-        # [node_size, hidden_layer_dim]
+        """
+        # first index is padding to normalize tensor size(due to batching)
+        fw_adjs : [(1 + batch_size), max_degree_size] # info of adjs as global index
+        bw_adjs : [(1 + batch_size), max_degree_size] # info of adjs as global index
+        features : [ (1 + batch_size) ] # operation 0 and 3 to 7. 0 implies padding.
+        """
+
+        # [(1 + batch_size), hidden_layer_dim]
         embedded_node_rep = self.encode_node_feature(features)
 
         # the fw_hidden and bw_hidden is the initial node embedding
-        # [node_size, dim_size]
+        # [(1 + batch_size), hidden_layer_dim]
         fw_hidden = embedded_node_rep
         bw_hidden = embedded_node_rep
 
@@ -68,7 +72,7 @@ class Encoder(nn.Module):
                 dim_mul = 2
 
             if hop > 6:
-                fw_aggregator = self.fw_aggregators[6]
+                fw_aggregator = fw_aggregators[6]
             else:
                 fw_aggregator = MeanAggregator(dim_mul * self.hidden_layer_dim, self.hidden_layer_dim, concat=self.concat, mode=self.mode)
                 fw_aggregators.append(fw_aggregator)
@@ -80,7 +84,6 @@ class Encoder(nn.Module):
 
             # [node_size, adj_size, word_embedding_dim]
             if hop == 0:
-
                 # embedded_node_repo에서 neighbor만 뽑아내기
                 neigh_vec_hidden = embedded_node_rep[fw_adjs]
                 
@@ -92,15 +95,15 @@ class Encoder(nn.Module):
                 """
 
             else:
-                print("fw_hidden_size", fw_hidden.size())
-                neigh_vec_hidden = torch.concat([fw_hidden, torch.zeros([1, dim_mul * self.hidden_layer_dim])], 0)[fw_adjs]
+                print("fw_hidden_size", fw_hidden.size)
+                # first index is padding node.
+                neigh_vec_hidden = torch.cat([torch.zeros([1, dim_mul * self.hidden_layer_dim], fw_hidden)], 0)[fw_adjs]
 
             # fw_hidden = fw_aggregator((fw_hidden, neigh_vec_hidden, fw_sampled_neighbors_len))
-            print("hop: {}, before aggregate : fw_hidden_size: {}".format(hop, fw_hidden.size()))
+            # print("hop: {}, before aggregate : fw_hidden_size: {}".format(hop, fw_hidden.size()))
             fw_hidden = fw_aggregator((fw_hidden, neigh_vec_hidden))
             print("hop: {}, after aggregate: fw_hidden_size: {}".format(hop, fw_hidden.size()))
             
-
             if self.graph_encode_direction == "bi":
                 if hop == 0:
                     dim_mul = 1
@@ -108,7 +111,7 @@ class Encoder(nn.Module):
                     dim_mul = 2
 
                 if hop > 6:
-                    bw_aggregator = self.bw_aggregators[6]
+                    bw_aggregator = bw_aggregators[6]
                 else:
                     bw_aggregator = MeanAggregator(dim_mul * self.hidden_layer_dim, self.hidden_layer_dim, concat=self.concat, mode=self.mode)
                     bw_aggregators.append(bw_aggregator)
@@ -120,7 +123,6 @@ class Encoder(nn.Module):
 
                 # [node_size, adj_size, word_embedding_dim]
                 if hop == 0:
-
                     # embedded_node_repo에서 neighbor만 뽑아내기
                     neigh_vec_hidden = embedded_node_rep[bw_adjs]
                     
@@ -133,19 +135,20 @@ class Encoder(nn.Module):
 
                 else:
                     print("bw_hidden_size", bw_hidden.size())
-                    neigh_vec_hidden = torch.concat([bw_hidden, torch.zeros([1, dim_mul * self.hidden_layer_dim])], 0)[bw_adjs]
+                    neigh_vec_hidden = torch.concat([torch.zeros([1, dim_mul * self.hidden_layer_dim], bw_hidden)], 0)[bw_adjs]
 
                 # bw_hidden = bw_aggregator((bw_hidden, neigh_vec_hidden, bw_sampled_neighbors_len))
                 bw_hidden = bw_aggregator((bw_hidden, neigh_vec_hidden))
 
         # hidden stores the representation for all nodes
-        fw_hidden = torch.reshape(fw_hidden, [-1, self.single_graph_nodes_size, 2 * self.hidden_layer_dim])
+        fw_hidden = torch.reshape(fw_hidden, [-1,2 * self.hidden_layer_dim])
         if self.graph_encode_direction == "bi":
-            bw_hidden = torch.reshape(bw_hidden, [-1, self.single_graph_nodes_size, 2 * self.hidden_layer_dim])
+            bw_hidden = torch.reshape(bw_hidden, [-1, 2 * self.hidden_layer_dim])
             hidden = torch.concat([fw_hidden, bw_hidden], dim=2)
         else:
             hidden = fw_hidden
-
+        
+        # pooling을 하려면 graph 당 node 개수가 일정해야함....
         hidden = F.relu(hidden)
 
         pooled = torch.max(hidden, dim=1)

@@ -66,13 +66,13 @@ class Graph2Seq(nn.Module):
         decoder에서는 operation + connection 이 node feature
         seminas에서는 다른 embedding 이용
         graph2sec 에서는 동일한 embedding 이용
-        나는 다르게 써야겠당
+        나는 다르게 embedding -> 차이가 있을까?
         """
 
     def forward(self, fw_adjs, bw_adjs, operations, targets=None):
         encoded_nodes, graph_embedding = self.encoder(fw_adjs, bw_adjs, operations)
-        # check dimensino
-        decoder_input = torch.concat([graph_embedding, targets], dim=1)
+        # check dimension
+        decoder_input = torch.cat([graph_embedding, targets], dim=1)
         predicted_softmax, decoded_ids = self.decoder(graph_embedding, targets=targets)
 
         return predicted_softmax, decoded_ids
