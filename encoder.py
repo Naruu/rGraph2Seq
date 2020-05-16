@@ -33,33 +33,26 @@ class Encoder(nn.Module):
         self.hop_size = hop_size
         self.concat = concat
 
-        """
-        # the following place holders are for the gcn
-        self.feature_info = tf.placeholder(tf.int32, [None, None])              # the feature info for each node
-        self.batch_nodes = tf.placeholder(tf.int32, [None, None])               # the nodes for each batch
-
-        self.sample_size_per_layer = tf.shape(self.fw_adj_info)[1]
-
-        self.single_graph_nodes_size = tf.shape(self.batch_nodes)[1]
-        """
         self.dropout = dropout
         self.learning_rate = learning_rate
     
-    def forward(self, fw_adjs, bw_adjs, features):
+    def forward(self, fw_adjs, bw_adjs, features, num_nodes):
         """
-        # first index is padding to normalize tensor size(due to batching)
-        fw_adjs : [(1 + batch_size), max_degree_size] # info of adjs as global index
-        bw_adjs : [(1 + batch_size), max_degree_size] # info of adjs as global index
-        features : [ (1 + batch_size) ] # operation 0 and 3 to 7. 0 implies padding.
+        fw_adjs : [ batch_size, max_degree_size] # info of adjs as global index
+        bw_adjs : [ batch_size, max_degree_size] # info of adjs as global index
+        features : [ (batch_size + 1) ] # operation range from 3 to 7 and also 0. 0 implies padding.
+        # last index of features is padding for empty neighbor
         """
 
-        # [(1 + batch_size), hidden_layer_dim]
+        # [ (batch_size + 1), hidden_layer_dim ]
+        # last index is padding for neighbor
         embedded_node_rep = self.encode_node_feature(features)
+        # print("enmbeded_node_rep : {}".format(embedded_node_rep.size()))
 
-        # the fw_hidden and bw_hidden is the initial node embedding
-        # [(1 + batch_size), hidden_layer_dim]
-        fw_hidden = embedded_node_rep
-        bw_hidden = embedded_node_rep
+        # fw_hidden and bw_hidden is the initial node embedding
+        # [ batch_size, hidden_layer_dim]
+        fw_hidden = embedded_node_rep[:-1]
+        bw_hidden = embedded_node_rep[:-1]
 
         fw_aggregators = []
         bw_aggregators = []
@@ -77,31 +70,18 @@ class Encoder(nn.Module):
                 fw_aggregator = MeanAggregator(dim_mul * self.hidden_layer_dim, self.hidden_layer_dim, concat=self.concat, mode=self.mode)
                 fw_aggregators.append(fw_aggregator)
 
-            # N^(k) as matrix
-            # N^k는 k-1 때의 neighbors를 aggregate해서 만들어진다.
-            # aggregator에 k-1 때의 neighbors를 넣어줘야한다.
-
-
-            # [node_size, adj_size, word_embedding_dim]
+            # neigh_vec_hidden: [node_size, adj_size, word_embedding_dim]
+            # same size with fw_adjs
             if hop == 0:
-                # embedded_node_repo에서 neighbor만 뽑아내기
+                # get embeddings of adjs
                 neigh_vec_hidden = embedded_node_rep[fw_adjs]
-                
-                """
-                # compute the neighbor size
-                tmp_sum = torch.sum(F.relu(neigh_vec_hidden), dim=2)
-                tmp_mask = torch.sign(tmp_sum)
-                fw_sampled_neighbors_len = torch.sum(tmp_mask, dim=1)
-                """
 
             else:
-                print("fw_hidden_size", fw_hidden.size)
-                # first index is padding node.
-                neigh_vec_hidden = torch.cat([torch.zeros([1, dim_mul * self.hidden_layer_dim], fw_hidden)], 0)[fw_adjs]
+                neigh_vec_hidden = torch.cat([fw_hidden, torch.zeros([1, dim_mul * self.hidden_layer_dim])], dim=0)[fw_adjs]
 
-            # fw_hidden = fw_aggregator((fw_hidden, neigh_vec_hidden, fw_sampled_neighbors_len))
-            # print("hop: {}, before aggregate : fw_hidden_size: {}".format(hop, fw_hidden.size()))
-            fw_hidden = fw_aggregator((fw_hidden, neigh_vec_hidden))
+            ## print("neigh_vec_hidden : {}".format(neigh_vec_hidden.size()))
+            
+            fw_hidden = fw_aggregator(fw_hidden, neigh_vec_hidden)
             print("hop: {}, after aggregate: fw_hidden_size: {}".format(hop, fw_hidden.size()))
             
             if self.graph_encode_direction == "bi":
@@ -116,50 +96,60 @@ class Encoder(nn.Module):
                     bw_aggregator = MeanAggregator(dim_mul * self.hidden_layer_dim, self.hidden_layer_dim, concat=self.concat, mode=self.mode)
                     bw_aggregators.append(bw_aggregator)
 
-                # N^(k) as matrix
-                # N^k는 k-1 때의 neighbors를 aggregate해서 만들어진다.
-                # aggregator에 k-1 때의 neighbors를 넣어줘야한다.
-
-
-                # [node_size, adj_size, word_embedding_dim]
+                # neigh_vec_hidden: [node_size, adj_size, word_embedding_dim]
+                # same size with bw_adjs
                 if hop == 0:
-                    # embedded_node_repo에서 neighbor만 뽑아내기
+                    # get embeddings of adjs
                     neigh_vec_hidden = embedded_node_rep[bw_adjs]
                     
-                    """
-                    # compute the neighbor size
-                    tmp_sum = torch.sum(F.relu(neigh_vec_hidden), dim=2)
-                    tmp_mask = torch.sign(tmp_sum)
-                    fw_sampled_neighbors_len = torch.sum(tmp_mask, dim=1)
-                    """
-
                 else:
-                    print("bw_hidden_size", bw_hidden.size())
-                    neigh_vec_hidden = torch.concat([torch.zeros([1, dim_mul * self.hidden_layer_dim], bw_hidden)], 0)[bw_adjs]
+                    neigh_vec_hidden = torch.cat([bw_hidden, torch.zeros([1, dim_mul * self.hidden_layer_dim])], dim=0)[bw_adjs]
 
-                # bw_hidden = bw_aggregator((bw_hidden, neigh_vec_hidden, bw_sampled_neighbors_len))
-                bw_hidden = bw_aggregator((bw_hidden, neigh_vec_hidden))
+                bw_hidden = bw_aggregator(bw_hidden, neigh_vec_hidden)
 
-        # hidden stores the representation for all nodes
-        fw_hidden = torch.reshape(fw_hidden, [-1,2 * self.hidden_layer_dim])
+
+        # split by number of nodes per graph
+        fw_hiddens = torch.split(fw_hidden, num_nodes.tolist())
+        # group by graph with padding(-100) to max pool
+        fw_hidden = torch.nn.utils.rnn.pad_sequence(fw_hiddens, batch_first=True, padding_value= -100)
+
         if self.graph_encode_direction == "bi":
-            bw_hidden = torch.reshape(bw_hidden, [-1, 2 * self.hidden_layer_dim])
-            hidden = torch.concat([fw_hidden, bw_hidden], dim=2)
+            bw_hiddens = torch.split(bw_hidden, num_nodes.tolist())
+            bw_hidden = torch.nn.utils.rnn.pad_sequence(bw_hiddens, batch_first=True, padding_value= -100)
+            hidden = torch.cat([fw_hidden, bw_hidden], dim=2)
         else:
             hidden = fw_hidden
         
-        # pooling을 하려면 graph 당 node 개수가 일정해야함....
-        hidden = F.relu(hidden)
+        
+        """
+        # hidden stores the representation for all nodes
+        fw_hidden = torch.reshape(fw_hidden, [-1, self.single_graph_nodes_size, 2 * self.hidden_layer_dim])
+        if self.graph_encode_direction == "bi":
+            bw_hidden = torch.reshape(bw_hidden, [-1, self.single_graph_nodes_size, 2 * self.hidden_layer_dim])
+            hidden = torch.cat([fw_hidden, bw_hidden], dim=2)
+        else:
+            hidden = fw_hidden
+        """
 
-        pooled = torch.max(hidden, dim=1)
+        hidden = F.relu(hidden)
+        pooled = torch.max(hidden, dim=1).values
+
+        ## print("pooled : {}".format(pooled.size()))
+        ## print("pooled : {}".format(pooled))
+
         if self.graph_encode_direction == "bi":
             graph_embedding = torch.reshape(pooled, [-1, 4 * self.hidden_layer_dim])
         else:
             graph_embedding = torch.reshape(pooled, [-1, 2 * self.hidden_layer_dim])
 
 
-        # graph_embedding = LSTMStateTuple(c=graph_embedding, h=graph_embedding)
+        # print("graph_embedding: {}".format(graph_embedding.size()))
+        # print(graph_embedding)
         graph_embedding = (graph_embedding, graph_embedding)
+
+        """
+        graph_embedding = LSTMStateTuple(c=graph_embedding, h=graph_embedding)
+        """
 
         # shape of hidden: [batch_size, single_graph_nodes_size, 4 * hidden_layer_dim]
         # shape of graph_embedding: ([batch_size, 4 * hidden_layer_dim], [batch_size, 4 * hidden_layer_dim])

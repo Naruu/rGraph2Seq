@@ -12,12 +12,12 @@ class MeanAggregator(nn.Module):
     """Aggregates via mean followed by matmul and non-linearity."""
 
     def __init__(self, input_dim, output_dim, neigh_input_dim=None,
-            dropout=0, bias=True, act=F.relu,
+            dropout=0, withBias=True, act=F.relu,
             concat=False, mode="train", **kwargs):
         super(MeanAggregator, self).__init__(**kwargs)
 
         self.dropout = dropout
-        self.bias = bias
+        self.withBias = withBias
         self.act = act
         self.concat = concat
         self.mode = mode
@@ -32,7 +32,7 @@ class MeanAggregator(nn.Module):
         self.neigh_weights = nn.init.xavier_uniform_(torch.empty(neigh_input_dim, output_dim))
         self.self_weights = nn.init.xavier_uniform_(torch.empty(input_dim, output_dim))
         
-        if self.bias:
+        if self.withBias:
             self.bias = torch.zeros(self.output_dim)
 
         self.input_dim = input_dim
@@ -40,9 +40,9 @@ class MeanAggregator(nn.Module):
 
     def forward(self, self_vecs, neigh_vecs, neigh_len=0):
 
-        if self.mode == "train":
-            neigh_vecs = F.dropout(neigh_vecs, 1-self.dropout)
-            self_vecs = F.dropout(self_vecs, 1-self.dropout)
+        if self.mode == "train": 
+            neigh_vecs = F.dropout(neigh_vecs, self.dropout)
+            self_vecs = F.dropout(self_vecs, self.dropout)
 
         # reduce_mean performs better than mean_pool
         neigh_means = torch.mean(neigh_vecs, dim=1)
@@ -58,7 +58,7 @@ class MeanAggregator(nn.Module):
             output = torch.cat([from_self, from_neighs], dim=1)
 
         # bias
-        if self.bias:
+        if self.withBias:
             output += self.bias
 
         return self.act(output)
