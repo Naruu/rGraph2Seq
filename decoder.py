@@ -8,7 +8,6 @@ import torch.nn.functional as F
 SOS_ID = 0
 EOS_ID = 0
 
-
 class Attention(nn.Module):
     def __init__(self, input_dim, source_dim=None, output_dim=None, bias=False):
         super(Attention, self).__init__()
@@ -51,7 +50,8 @@ class Decoder(nn.Module):
     def __init__(self,
                 mode,
                 hidden_dim,
-                vocab_size,
+                embedding_vocab_size,
+                decoder_vocab_size,
                 dropout,
                 length,
                 layers
@@ -60,65 +60,74 @@ class Decoder(nn.Module):
         self.mode = mode
         self.hidden_dim = hidden_dim
         self.length = length
-        self.vocab_size = vocab_size
+        self.embedding_vocab_size = embedding_vocab_size
+        self.decoder_vocab_size = decoder_vocab_size
         self.layers = layers
         self.rnn = nn.LSTM(self.hidden_dim, self.hidden_dim, self.layers, batch_first=True, dropout=dropout)
         self.init_input = None
-        self.embedding = nn.Embedding(self.vocab_size, self.hidden_dim)
+        self.embedding = nn.Embedding(self.embedding_vocab_size, self.hidden_dim)
         self.dropout = dropout
         self.attention = Attention(self.hidden_dim)
-        self.out = nn.Linear(self.hidden_dim, self.vocab_size)
+        self.out = nn.Linear(self.hidden_dim, self.decoder_vocab_size)
         self.n = int(math.floor(math.sqrt((self.length + 1) * 2)))
         self.offsets=[]
         for i in range(self.n):
             self.offsets.append( (i + 3) * i // 2 - 1)
     
-    def forward(self, x, encoder_hidden=None, encoder_outputs=None, target=None):
-        """
-        Each decode cell:
-            input : embedded sequence of node
-            output : node
-        thus, should change node to embedded representation in next input
-        """
-        ## Always, exist :  encoder_hidden, encoder_output
+    def forward(self, x, num_nodes, initial_states=None, encoder_hidden=None, targets=None):
 
+        """
+        x는 initial input of each batch
+        that is, [batch_size, graph_embeddindg_dimension]
+        """
         ## train이든 test 이든
         ## graph embedding을 첫 input으로 받아서 -> 계속해서 전 단계의 embedding을 받겟지.
 
-        ## encoder last state와 attention을 해서 : 이때 graph embedding은 제외해야해.
-        ## output을 만들어내야해
+        ## encoder last state와 attention : 이때 graph embedding은 제외 -> decoder output
 
-        ## train이면 output과 실제 target을 비교하고, 다음 input은 target의 element 값이 되어야할 거고
-        ## loss function을 비교해서 gradient update를 해야돼
+        ## train이면 output과 실제 target을 비교하고, 다음 input은 target의 element 값이 되고
+        ## loss function을 비교해서 gradient update
 
+        ## test이면 output이 다음 input이 되고, loss function로 정확도만 계산. no gradient update
 
-        ## test이면 output이 다음 input이 되고, loss function만 비교하면 되지
-
-        decoder_hidden = self._init_state(encoder_outputs)
-
-        # x : concat of [graph_embeddindg, node embeddings at last step]
         if self.mode == "train":
-            ## there would be target.
-            ## train to reduce the target
-            bsz = x.size(0)
-            tgt_len = x.size(1)
+            batch_size = x.size(0)
+            target_length = targets.size(1)
+            # targets to decoder input
+            x = torch.Tensor().new_full((batch_size, 1), 0, dtype=torch.long, requires_grad=True)
+            x = torch.cat([x, targets], dim=1)
+            print("after cat : {}".format(x.size()))
+            x = self.embedding(x)
+            print("after embedding : {}".format(x.size()))
             x = F.dropout(x, self.dropout, training=self.training)
             residual = x
-            x, hidden = self.rnn(x, decoder_hidden)
+            """
+            h_0: shape (num_layers * num_directions, batch, hidden_size): initial hidden state for each element in the batch. If the LSTM is bidirectional, num_directions should be 2, else it should be 1.
+            c_0: shape (num_layers * num_directions, batch, hidden_size): initial cell state for each element in the batch.
+            """
+            print("initial states : {}".format(initial_states[0].size()))
+            x, hidden = self.rnn(x, initial_states)
             x = (residual + x) * math.sqrt(0.5)
             residual = x
             x, _ = self.attention(x, encoder_hidden)
             x = (residual + x) * math.sqrt(0.5)
+
             predicted_softmax = F.log_softmax(self.out(x.view(-1, self.hidden_dim)), dim=-1)
-            predicted_softmax = predicted_softmax.view(bsz, tgt_len, -1)
+            predicted_softmax = predicted_softmax.view(batch_size, self.decoder_vocab_size, -1)
+            print("predicted_softmax: {}".format(predicted_softmax.size()))
+            predicted_softmax = predicted_softmax.view(batch_size, targets, -1)
+            # predicteed_softmax_list = torch.split(predicted_softmax, num_nodes.tolist())
+            # predicted_softmax = torch.nn.utils.rnn.pad_sequence(predicteed_softmax_list, batch_first=True, padding_value=0)
         
             return predicted_softmax, None
 
         # x : list of graph embeddings
         elif self.mode == "test":
-            bsz = x.size(0)
-            length = self.length
-            decoded_ids = x.new_tensor(bsz, 0).fill_(0).long()
+            batch_size = x.size(0)
+            
+            decoder_hidden = initial_states
+            
+            decoded_ids = torch.Tensor().new_full((batch_size, 1), 0, dtype=torch.long, requires_grad=False)
             
             def decode(step, output):
                 if step in self.offsets:  # sample operation, should be in [3, 7]
@@ -130,7 +139,8 @@ class Decoder(nn.Module):
                     symbol = output[:, 1:3].topk(1)[1] + 1
                 return symbol
             
-            for i in range(length):
+            for i in range(self.length):
+                x = self.embedding(decoded_ids[:, i:i+1])
                 x = F.dropout(x, self.dropout, training=self.training)
                 residual = x
                 x, decoder_hidden = self.rnn(x, decoder_hidden)
@@ -144,7 +154,3 @@ class Decoder(nn.Module):
                 x = self.embedding(symbol)
 
             return None, decoded_ids
-    
-    def _init_state(self, encoder_outputs):
-        # tuple of (initial hidden state, initial cell state)
-        return tuple([encoder_outputs, encoder_outputs])

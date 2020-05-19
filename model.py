@@ -12,6 +12,9 @@ import utils
 from decoder import Decoder
 from encoder import Encoder
 
+SOS_ID = 0
+EOS_ID = 0
+
 
 class Graph2Seq(nn.Module):
 
@@ -22,7 +25,8 @@ class Graph2Seq(nn.Module):
         self.l2_lambda = conf.l2_lambda
         self.feature_embedding_dim = conf.hidden_layer_dim
         self.vocab_size = conf.vocab_size
-        self.length = conf.vocab_size -1
+        self.length = conf.length
+        
         self.hop_size = conf.hop_size
 
         # the setting for the GCN
@@ -53,26 +57,22 @@ class Graph2Seq(nn.Module):
         self.decoder = Decoder(
                                 mode=mode,
                                 hidden_dim=self.feature_embedding_dim,
-                                vocab_size=self.vocab_size,
+                                embedding_vocab_size=conf.embedding_vocab_size,
+                                decoder_vocab_size=conf.decoder_vocab_size,
                                 dropout=self.dropout,
                                 length=self.length,
                                 layers=self.decoder_layers
                                 )
 
 
-        """
-        encoder, decoder가 공유해야하는 것 : node feature embedding -> should it?
-        encoder에서는 operation이 ndoe feature
-        decoder에서는 operation + connection 이 node feature
-        seminas에서는 다른 embedding 이용
-        graph2sec 에서는 동일한 embedding 이용
-        나는 다르게 embedding -> 차이가 있을까?
-        """
 
-    def forward(self, fw_adjs, bw_adjs, operations, targets=None):
-        encoded_nodes, graph_embedding = self.encoder(fw_adjs, bw_adjs, operations)
+    def forward(self, fw_adjs, bw_adjs, operations, num_nodes, targets=None):
+        encoded_nodes, graph_embedding = self.encoder(fw_adjs, bw_adjs, operations, num_nodes)
+        # initail states has dimension of [num_layers * num_directions, batch, hidden_size]
+        graph_embedding = graph_embedding.transpose(0,1).contiguous()
         # check dimension
-        decoder_input = torch.cat([graph_embedding, targets], dim=1)
-        predicted_softmax, decoded_ids = self.decoder(graph_embedding, targets=targets)
+        initial_states = tuple([graph_embedding, graph_embedding])
+        decoder_input = torch.Tensor([SOS_ID] * len(num_nodes))
+        predicted_softmax, decoded_ids = self.decoder(decoder_input, initial_states=initial_states, encoder_outputs=encoded_nodes, targets=targets)
 
         return predicted_softmax, decoded_ids
