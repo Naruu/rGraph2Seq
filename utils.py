@@ -23,6 +23,7 @@ OUTPUT = 'output'
 4: CONV3X3
 5: MAXPOOL3X3
 6: OUTPUT
+7: INPUT
 """
 
 MAX_EDGE = 9
@@ -74,7 +75,7 @@ class ControllerDataset(torch.utils.data.Dataset):
                 ops.append(5)
             elif op == OUTPUT:
                 ops.append(6)
-            if op == INPUT:
+            elif op == INPUT:
                 ops.append(7)
 
         sample = {
@@ -97,6 +98,7 @@ def collate_fn(samples):
     graph_size = conf.graph_size
     # degree_max_size = 5
     # graph_size = 7
+    # seq_max_length = conf.length
     seq_max_length = int((graph_size+2)*(graph_size-1)/2)
 
     g_idxs = []
@@ -121,22 +123,16 @@ def collate_fn(samples):
             if matrix[row][col] :
                 g_fw_adjs[g_idx_base + row].append(g_idx_base + col)
                 g_bw_adjs[g_idx_base + col].append(g_idx_base + row)
-
+            
         for op in sample['operations']:
             g_operations.append(op)
-
-        sequence = sample['sequence']
-
-        sequence = torch.cat([sequence, torch.LongTensor([0] * (seq_max_length - len(sequence)))])
-        g_sequence.append(sequence)
+        g_sequence.append(sample['sequence'])
 
         g_idx_base += num_nodes
 
     for idx in range(len(g_fw_adjs)):
-        g_fw_adjs[idx].extend([g_idx_base] * (degree_max_size - len(g_fw_adjs[idx])))
-        g_bw_adjs[idx].extend([g_idx_base] * (degree_max_size - len(g_bw_adjs[idx])))
-        
-    g_operations.append(0)
+        g_fw_adjs[idx].extend([conf.adj_padding] * (degree_max_size - len(g_fw_adjs[idx])))
+        g_bw_adjs[idx].extend([conf.adj_padding] * (degree_max_size - len(g_bw_adjs[idx])))
 
     g_num_nodes = torch.LongTensor(g_num_nodes)
 
@@ -144,11 +140,11 @@ def collate_fn(samples):
     g_fw_adjs = torch.LongTensor(g_fw_adjs)
     g_bw_adjs = torch.LongTensor(g_bw_adjs)
 
-    # [batch_size +1] # due to padding
+    # [batch_size+1] # due to padding
     g_operations = torch.LongTensor(g_operations)
 
-    # [sum of sequence_length]
-    g_sequence = torch.stack(g_sequence)
+    # [batch_size, max graph_size in batch ] # due to padding
+    g_sequence = torch.nn.utils.rnn.pad_sequence(g_sequence, batch_first=True, padding_value=0)    
 
     return {
             'num_nodes' : g_num_nodes,
@@ -171,11 +167,13 @@ def convert_arch_to_seq(matrix, ops):
             seq.append(4)
         elif ops[col] == MAXPOOL3X3:
             seq.append(5)
-        if ops[col] == OUTPUT:
+        elif ops[col] == OUTPUT:
             seq.append(6)
+        elif ops[col] == INPUT:
+           seq.append(7)
+    assert len(seq) == (n+2)*(n-1)/2
     return seq
 
-    assert len(seq) == (n+2)*(n-1)/2
 
 def convert_seq_to_arch(seq):
     n = int(math.floor(math.sqrt((len(seq) + 1) * 2)))

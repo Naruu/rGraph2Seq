@@ -26,7 +26,7 @@ class Encoder(nn.Module):
         self.vocab_size = vocab_size
         self.feature_embedding_dim = self.hidden_layer_dim = feature_embedding_dim
         # self.word_embedding_dim = conf.hidden_layer_dim
-        self.node_feature_embedding = nn.Embedding(self.vocab_size, self.feature_embedding_dim)
+        self.node_feature_embedding = nn.Embedding(self.vocab_size+1, self.feature_embedding_dim)
 
         # the setting for the GCN
         self.graph_encode_direction = graph_encode_direction
@@ -51,8 +51,8 @@ class Encoder(nn.Module):
 
         # fw_hidden and bw_hidden is the initial node embedding
         # [ batch_size, hidden_layer_dim]
-        fw_hidden = embedded_node_rep[:-1]
-        bw_hidden = embedded_node_rep[:-1]
+        fw_hidden = embedded_node_rep
+        bw_hidden = embedded_node_rep
 
         fw_aggregators = []
         bw_aggregators = []
@@ -79,10 +79,11 @@ class Encoder(nn.Module):
             else:
                 neigh_vec_hidden = torch.cat([fw_hidden, torch.zeros([1, dim_mul * self.hidden_layer_dim])], dim=0)[fw_adjs]
 
-            ## print("neigh_vec_hidden : {}".format(neigh_vec_hidden.size()))
+            # print("neigh_vec_hidden : {}".format(neigh_vec_hidden.size()))
+            # print("fw_hidden : {}".format(fw_hidden.size()))
             
             fw_hidden = fw_aggregator(fw_hidden, neigh_vec_hidden)
-            print("hop: {}, after aggregate: fw_hidden_size: {}".format(hop, fw_hidden.size()))
+            # print("hop: {}, after aggregate: fw_hidden_size: {}".format(hop, fw_hidden.size()))
             
             if self.graph_encode_direction == "bi":
                 if hop == 0:

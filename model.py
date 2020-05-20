@@ -22,7 +22,7 @@ class Graph2Seq(nn.Module):
         super(Graph2Seq, self).__init__()
 
         self.mode = mode
-        self.l2_lambda = conf.l2_lambda
+        # self.l2_lambda = conf.l2_lambda
         self.feature_embedding_dim = conf.hidden_layer_dim
         self.vocab_size = conf.vocab_size
         self.length = conf.length
@@ -35,7 +35,7 @@ class Graph2Seq(nn.Module):
 
         # the setting for the decoder
         self.single_graph_nodes_size = conf.graph_size
-        self.attention = conf.attention
+        # self.attention = conf.attention
         self.decoder_layers = conf.decoder_layers
 
         self.dropout = conf.dropout
@@ -67,12 +67,22 @@ class Graph2Seq(nn.Module):
 
 
     def forward(self, fw_adjs, bw_adjs, operations, num_nodes, targets=None):
-        encoded_nodes, graph_embedding = self.encoder(fw_adjs, bw_adjs, operations, num_nodes)
+        encoder_hidden, graph_embedding = self.encoder(fw_adjs, bw_adjs, operations, num_nodes)
+
         # initail states has dimension of [num_layers * num_directions, batch, hidden_size]
-        graph_embedding = graph_embedding.transpose(0,1).contiguous()
-        # check dimension
-        initial_states = tuple([graph_embedding, graph_embedding])
-        decoder_input = torch.Tensor([SOS_ID] * len(num_nodes))
-        predicted_softmax, decoded_ids = self.decoder(decoder_input, initial_states=initial_states, encoder_outputs=encoded_nodes, targets=targets)
+        initial_states = graph_embedding[0].unsqueeze(0)
+        # print("initial_states size : {}".format(initial_states.size()))
+        initial_states = tuple([initial_states, initial_states])
+
+        # batch_size = graph_embedding.size(0)
+
+        # decoder input 수정?
+        if self.mode == "train":
+            # decoder_input = torch.Tensor().new_full((batch_size, 1), 0, dtype=torch.long, requires_grad=True)
+            predicted_softmax, decoded_ids = self.decoder(graph_embedding[0], num_nodes, initial_states=initial_states, encoder_hidden=encoder_hidden, targets=targets)
+
+        elif self.mode == "test":
+            # decoder_input = torch.Tensor().new_full((batch_size, 1), 0, dtype=torch.long, requires_grad=True)
+            predicted_softmax, decoded_ids = self.decoder(graph_embedding[0], num_nodes, initial_states=initial_states, encoder_hidden=encoder_hidden)
 
         return predicted_softmax, decoded_ids
