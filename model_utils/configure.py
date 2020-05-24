@@ -4,7 +4,7 @@ seed = 1
 
 mode = "train"
 data_file_path = "data/train_data.json"
-model_path = "model_result/model.pth"
+model_path = "data/model_result/model.pth"
 ## data_file_path = "data/dev_data.json"
 ## data_file_path = "data/test_data.json"
 

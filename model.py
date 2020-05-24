@@ -56,7 +56,7 @@ class Graph2Seq(nn.Module):
 
         self.decoder = Decoder(
                                 mode=mode,
-                                hidden_dim=self.feature_embedding_dim,
+                                hidden_dim=self.feature_embedding_dim * 4,
                                 embedding_vocab_size=conf.embedding_vocab_size,
                                 decoder_vocab_size=conf.decoder_vocab_size,
                                 dropout=self.dropout,

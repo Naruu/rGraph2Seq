@@ -156,4 +156,4 @@ dmypy.json
 # End of https://www.gitignore.io/api/git,macos,pytho
 
 # data files
-data/
+*.tfrecord
