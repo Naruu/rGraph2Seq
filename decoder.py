@@ -77,23 +77,37 @@ class Decoder(nn.Module):
     def forward(self, x, num_nodes, initial_states=None, encoder_hidden=None, targets=None):
 
         """
-        x:  initial input of each batch
-        [batch_size, graph_embeddindg_dimension]
+        x는 initial input of each batch
+        that is, [batch_size, graph_embeddindg_dimension]
         """
+        ## train이든 test 이든
+        ## graph embedding을 첫 input으로 받아서 -> 계속해서 전 단계의 embedding을 받겟지.
+
+        ## encoder last state와 attention : 이때 graph embedding은 제외 -> decoder output
+
+        ## train이면 output과 실제 target을 비교하고, 다음 input은 target의 element 값이 되고
+        ## loss function을 비교해서 gradient update
+
+        ## test이면 output이 다음 input이 되고, loss function로 정확도만 계산. no gradient update
 
         if self.mode == "train":
             batch_size = x.size(0)
             target_length = targets.size(1)
             # targets to decoder input
             x = torch.Tensor().new_full((batch_size, 1), 0, dtype=torch.long, requires_grad=True)
-            x = torch.cat([x, targets], dim=1)
+            # print("before cat : {}".format(x.size()))
+            x = torch.cat([x, targets[:,:-1]], dim=1)
+            
+            # print("after cat : {}".format(x.size()))
             x = self.embedding(x)
+            # print("after embedding : {}".format(x.size()))
             x = F.dropout(x, self.dropout, training=self.training)
             residual = x
             """
             h_0: shape (num_layers * num_directions, batch, hidden_size): initial hidden state for each element in the batch. If the LSTM is bidirectional, num_directions should be 2, else it should be 1.
             c_0: shape (num_layers * num_directions, batch, hidden_size): initial cell state for each element in the batch.
             """
+            # print("initial states : {}".format(initial_states[0].size()))
             x, hidden = self.rnn(x, initial_states)
             x = (residual + x) * math.sqrt(0.5)
             residual = x
@@ -102,15 +116,17 @@ class Decoder(nn.Module):
 
             predicted_softmax = F.log_softmax(self.out(x.view(-1, self.hidden_dim)), dim=-1)
             predicted_softmax = predicted_softmax.view(batch_size, self.decoder_vocab_size, -1)
-            # node size가 달라서 padding 된 부분은?
-            # padding이 된 부분은 강제로 decoded된 부분을 일치 시킴?
+            # print("predicted_softmax before -1: {}".format(predicted_softmax.size()))
             predicted_softmax = predicted_softmax.view(batch_size, target_length, -1)
+            # predicteed_softmax_list = torch.split(predicted_softmax, num_nodes.tolist())
+            # predicted_softmax = torch.nn.utils.rnn.pad_sequence(predicteed_softmax_list, batch_first=True, padding_value=0)
         
             return predicted_softmax, None
 
         # x : list of graph embeddings
         elif self.mode == "test":
             batch_size = x.size(0)
+            length = max(num_nodes)
             decoder_hidden = initial_states
             
             decoded_ids = torch.Tensor().new_full((batch_size, 1), 0, dtype=torch.long, requires_grad=False)
@@ -125,7 +141,7 @@ class Decoder(nn.Module):
                     symbol = output[:, 1:3].topk(1)[1] + 1
                 return symbol
             
-            for i in range(self.length):
+            for i in range(length):
                 x = self.embedding(decoded_ids[:, i:i+1])
                 x = F.dropout(x, self.dropout, training=self.training)
                 residual = x

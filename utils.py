@@ -107,7 +107,7 @@ def collate_fn(samples):
     g_operations = []
     g_sequence = []
     g_num_nodes = []
-
+    
     g_idx_base = 0
     for g_idx, sample in enumerate(samples):
         matrix = sample['matrix']

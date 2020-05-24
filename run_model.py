@@ -39,7 +39,7 @@ def main(mode, data_file_path):
 
     # load data
     dataset = utils.ControllerDataset(data_file_path)
-    queue = torch.utils.data.DataLoader(dataset, batch_size=conf.batch_size, shuffle=True, pin_memory=False, collate_fn=utils.collate_fn)
+    queue = torch.utils.data.DataLoader(dataset, batch_size=conf.batch_size, shuffle=True, pin_memory=True, collate_fn=utils.collate_fn)
 
     if mode == "train":
 
@@ -50,6 +50,7 @@ def main(mode, data_file_path):
         def train_step(train_queue, optimizer):
             objs = utils.AvgrageMeter()
             nll = utils.AvgrageMeter()
+
             for step, sample in enumerate(train_queue):
                 fw_adjs = sample['fw_adjs'] 
                 bw_adjs = sample['bw_adjs'] 
@@ -59,6 +60,7 @@ def main(mode, data_file_path):
 
                 optimizer.zero_grad()
                 log_prob, predicted_value = model(fw_adjs, bw_adjs, operations, num_nodes, targets=sequence)
+                # print("input: {} output : {}".format(log_prob.size(), sequence.size()))
                 loss = F.nll_loss(log_prob.contiguous().view(-1, log_prob.size(-1)), sequence.view(-1))
                 loss.backward()
                 torch.nn.utils.clip_grad_norm_(model.parameters(), conf.grad_bound)
@@ -67,9 +69,12 @@ def main(mode, data_file_path):
                 n = sequence.size(0)
                 objs.update(loss.data, n)
                 nll.update(loss.data, n)
+                # logging.info("step : %04d, objs: %.6f, nll : %.6f", step, objs,avgs, nll)
 
             return objs.avg, nll.avg
         
+        ## Check with one epoch
+        epoch = 1
         for epoch in range(1, epochs + 1):
             loss, ce = train_step(queue, optimizer)
             logging.info("epoch %04d train loss %.6f ce %.6f", epoch, loss, ce)
@@ -96,10 +101,6 @@ def main(mode, data_file_path):
                 
                 match = torch.all(torch.equal(predicted_value, sequence), dim=1)
                 total += len(num_nodes)
-                """
-                ## TODO calculate accuracy
-                accuracy = predicted_value
-                """
 
             accuracy = match / predicted_value.size(0)
             return accuracy
